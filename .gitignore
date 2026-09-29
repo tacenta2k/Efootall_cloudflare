@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.netlify/
+.env
+.env.*
+test-results/
+playwright-report/
+
+supabase/.temp/
+
+# Local credentials and tooling state
+.aws/
+.codex/
+.agents/
+.wrangler/
+.dev.vars
+.dev.vars.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
