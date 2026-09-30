@@ -32,7 +32,8 @@ export function db() {
   const create = () =>
     postgres(serverEnv('DATABASE_URL')!, {
       // Hyperdrive manages TLS to PostgreSQL; its Worker-facing connection is local.
-      ...(cloudflare ? {} : { ssl: 'require' as const }),
+      // Queries use scalar and JSON/JSONB values, not PostgreSQL array columns.
+      ...(cloudflare ? { fetch_types: false } : { ssl: 'require' as const }),
       max: 2,
       prepare: false,
       idle_timeout: 20,

@@ -7,11 +7,26 @@ export interface Env extends CloudflareBindings {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx?: { waitUntil(task: Promise<unknown>): void },
+  ): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path !== '/api' && !path.startsWith('/api/')) return env.ASSETS.fetch(request);
+    const defer = ctx
+      ? (task: () => Promise<void>) => {
+          // Deferred maintenance owns a separate client and closes it inside
+          // waitUntil; response cleanup must not close its in-flight connection.
+          ctx.waitUntil(
+            withCloudflareBindings(env, () => withRequestDatabase(task)).catch(() => {
+              console.warn('Team logo cleanup deferred; retry on next authenticated action.');
+            }),
+          );
+        }
+      : undefined;
     const response = await withCloudflareBindings(env, () =>
-      withRequestDatabase(() => handler(request)),
+      withRequestDatabase(() => handler(request, defer)),
     );
     response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
     response.headers.set('X-Frame-Options', 'DENY');

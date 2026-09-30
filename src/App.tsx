@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { WifiOff } from 'lucide-react';
 import { auth } from './lib/api';
 import { oauthCallbackError, wasAuthCallback } from './lib/auth';
@@ -27,16 +27,26 @@ export default function App() {
         return false;
       }
     });
+  const lastAuth = useRef({ userId: '', token: '' });
   useEffect(() => {
     let active = true;
     let eventReceived = false;
-    const sub = auth?.auth.onAuthStateChange((_event, session) => {
+    const sub = auth?.auth.onAuthStateChange((event, session) => {
       if (!active) return;
       eventReceived = true;
       setAuthReady(true);
       setUserId(session?.user.id ?? '');
       setSignedIn(Boolean(session));
-      setAuthRevision((r) => r + 1);
+      const next = { userId: session?.user.id ?? '', token: session?.access_token ?? '' };
+      if (
+        next.userId !== lastAuth.current.userId ||
+        next.token !== lastAuth.current.token ||
+        event === 'SIGNED_OUT' ||
+        event === 'USER_UPDATED'
+      ) {
+        lastAuth.current = next;
+        setAuthRevision((r) => r + 1);
+      }
       if (session) {
         setShowAuth(false);
         setAuthError('');
@@ -50,6 +60,14 @@ export default function App() {
         if (!eventReceived) {
           setSignedIn(Boolean(data.session));
           setUserId(data.session?.user.id ?? '');
+          const next = {
+            userId: data.session?.user.id ?? '',
+            token: data.session?.access_token ?? '',
+          };
+          if (next.userId !== lastAuth.current.userId || next.token !== lastAuth.current.token) {
+            lastAuth.current = next;
+            setAuthRevision((r) => r + 1);
+          }
         }
         setAuthReady(true);
       })
@@ -120,6 +138,7 @@ export default function App() {
             code={decodeURIComponent(match[1]).toUpperCase()}
             onAuth={() => setShowAuth(true)}
             authRevision={authRevision}
+            authIdentity={userId}
           />
         ) : location.pathname === '/' ||
           location.pathname === '/auth/callback' ||

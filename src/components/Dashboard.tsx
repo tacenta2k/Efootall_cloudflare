@@ -1,6 +1,6 @@
 import TeamLogo from './TeamLogo';
 import { copyText } from '../lib/clipboard';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Trophy,
   LayoutDashboard,
@@ -22,8 +22,10 @@ import {
   TournamentConflictError,
   change,
   getTournament,
+  refreshTournament,
   type Snapshot,
 } from '../lib/api';
+import { mergeSnapshot } from '../lib/tournamentRefresh';
 import { aggregate, standings, played } from '../lib/engine';
 import type { Action, Match } from '../lib/types';
 import { Brand, Empty, ErrorText, SectionTitle, statusLabel, TournamentStatus } from './ui';
@@ -45,10 +47,12 @@ export default function Dashboard({
   code,
   onAuth,
   authRevision,
+  authIdentity,
 }: {
   code: string;
   onAuth: () => void;
   authRevision: number;
+  authIdentity: string;
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [error, setError] = useState(''),
@@ -57,23 +61,35 @@ export default function Dashboard({
     [profile, setProfile] = useState<string | null>(null),
     [notice, setNotice] = useState(''),
     [refreshing, setRefreshing] = useState(false),
-    [lastSync, setLastSync] = useState<Date | null>(null);
+    [lastSync, setLastSync] = useState<Date | null>(null),
+    [validatedIdentity, setValidatedIdentity] = useState<string | null>(null);
+  const authGeneration = useRef(authRevision);
+  authGeneration.current = authRevision;
+  const identity = useRef(authIdentity);
+  identity.current = authIdentity;
   const latest = useRef<Snapshot | null>(null),
-    inFlight = useRef(false);
-  const accept = useCallback((s: Snapshot) => {
-    if (!latest.current || s.tournament.version >= latest.current.tournament.version) {
-      latest.current = s;
-      setSnapshot(s);
+    inFlight = useRef<{ revision: number; controller: AbortController } | null>(null);
+  const accept = useCallback((s: Snapshot, revision: number) => {
+    if (revision !== authGeneration.current) return;
+    const next = mergeSnapshot(latest.current, s);
+    if (next !== latest.current) {
+      latest.current = next;
+      setSnapshot(next);
     }
+    setValidatedIdentity(identity.current);
     setLastSync(new Date());
   }, []);
   const refresh = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+    const revision = authGeneration.current;
+    if (inFlight.current?.revision === revision) return;
+    inFlight.current?.controller.abort();
+    const flight = { revision, controller: new AbortController() };
+    inFlight.current = flight;
     setRefreshing(true);
     try {
-      const s = await getTournament(code);
-      accept(s);
+      const s = await refreshTournament(code, latest.current, flight.controller.signal);
+      if (inFlight.current !== flight || revision !== authGeneration.current) return;
+      accept(s, revision);
       setError('');
       try {
         const recent = JSON.parse(localStorage.getItem('touchline-recent') ?? '[]') as {
@@ -93,14 +109,16 @@ export default function Dashboard({
         /* Optional convenience only. */
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to load tournament.');
+      if (inFlight.current === flight && revision === authGeneration.current)
+        setError(e instanceof Error ? e.message : 'Unable to load tournament.');
     } finally {
-      inFlight.current = false;
-      setRefreshing(false);
+      if (inFlight.current === flight) {
+        inFlight.current = null;
+        setRefreshing(false);
+      }
     }
   }, [code, accept]);
   useEffect(() => {
-    void refresh();
     const timer = setInterval(() => {
       if (!document.hidden) void refresh();
     }, 5000);
@@ -113,7 +131,12 @@ export default function Dashboard({
       clearInterval(timer);
       window.removeEventListener('online', onVisible);
       document.removeEventListener('visibilitychange', onVisible);
+      inFlight.current?.controller.abort();
+      inFlight.current = null;
     };
+  }, [refresh]);
+  useEffect(() => {
+    void refresh();
   }, [refresh, authRevision]);
   useEffect(() => {
     if (!notice) return;
@@ -121,9 +144,10 @@ export default function Dashboard({
     return () => clearTimeout(timer);
   }, [notice]);
   async function act(action: Action, version?: number) {
+    const revision = authGeneration.current;
     try {
       const result = await change(latest.current!.tournament, action, version);
-      accept(result);
+      accept(result, revision);
       setNotice(
         action.type === 'score'
           ? 'Result saved. Everyone’s standings are updating.'
@@ -134,7 +158,7 @@ export default function Dashboard({
         // A poll already in flight may predate the rejected write. Fetch a new
         // snapshot and carry it to the form instead of skipping that refresh.
         try {
-          accept(await getTournament(code));
+          accept(await getTournament(code), revision);
           setError('');
         } catch {
           throw new ApiError(
@@ -167,7 +191,14 @@ export default function Dashboard({
         setError('Could not copy automatically. Public link: ' + url);
     }
   };
-  if (!snapshot)
+  const openMatch = useCallback((m: Match) => {
+    setProfile(null);
+    setMatch(m);
+  }, []);
+  const t = snapshot?.tournament;
+  const rows = useMemo(() => (t ? standings(t) : []), [t]);
+  const done = useMemo(() => (t ? t.matches.filter(played) : []), [t]);
+  if (!snapshot || !t)
     return (
       <div className="dashboard-loading">
         <Brand />
@@ -186,16 +217,10 @@ export default function Dashboard({
         </div>
       </div>
     );
-  const { tournament: t, canEdit } = snapshot,
-    rows = standings(t),
-    done = t.matches.filter(played),
+  const canEdit = snapshot.canEdit && validatedIdentity === authIdentity,
     next = t.matches.find((m) => !played(m)),
     champion = t.players.find((p) => p.id === t.champion),
     leader = rows[0];
-  const openMatch = (m: Match) => {
-    setProfile(null);
-    setMatch(m);
-  };
   return (
     <div className="app-shell">
       <aside className="sidebar">

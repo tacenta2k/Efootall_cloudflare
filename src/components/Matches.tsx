@@ -1,5 +1,5 @@
 import TeamLogo from './TeamLogo';
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Check, Pencil, ArrowRight, Clock } from 'lucide-react';
 import type { Action, Match, Tie, Tournament } from '../lib/types';
 import { aggregate, knockoutResolution, played } from '../lib/engine';
@@ -18,7 +18,18 @@ export function resolutionLabel(t: Tournament, tie: Tie) {
     : r.method === 'manual' ? `${name(r.winner)} wins · confirmed by admin` : `${name(r.winner)} wins on score`;
   return result + (r.extraTime ? ' · after extra time' : '');
 }
-export function MatchCard({
+// Snapshots are immutable. Share one lookup across every card for that player
+// array; WeakMap permits old snapshots to be collected after refreshes.
+const playerLookups = new WeakMap<Tournament['players'], Map<string, Tournament['players'][number]>>();
+function playersById(players: Tournament['players']) {
+  let lookup = playerLookups.get(players);
+  if (!lookup) {
+    lookup = new Map(players.map((player) => [player.id, player]));
+    playerLookups.set(players, lookup);
+  }
+  return lookup;
+}
+export const MatchCard = memo(function MatchCard({
   match: m,
   t,
   onOpen,
@@ -27,8 +38,9 @@ export function MatchCard({
   t: Tournament;
   onOpen: (m: Match) => void;
 }) {
-  const a = t.players.find((p) => p.id === m.home)!,
-    b = t.players.find((p) => p.id === m.away)!;
+  const players = playersById(t.players);
+  const a = players.get(m.home)!,
+    b = players.get(m.away)!;
   const tie = t.ties.find((tie) => tie.id === m.tieId);
   const agg = tie ? aggregate(t, tie) : null;
   const pending = tie && agg?.complete && agg.a === agg.b && !tie.winner;
@@ -93,21 +105,26 @@ export function MatchCard({
       </span>
     </button>
   );
-}
-export function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => void }) {
+});
+export const Matches = memo(function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => void }) {
   const [filter, setFilter] = useState('all'),
     [leg, setLeg] = useState('all'),
     [day, setDay] = useState('all'),
     [stage, setStage] = useState('all'),
     [round, setRound] = useState('all');
-  const list = t.matches.filter(
+  const list = useMemo(() => t.matches.filter(
     (m) =>
       (filter === 'all' || (filter === 'completed') === played(m)) &&
       (stage !== 'league' || leg === 'all' || m.leg === Number(leg)) &&
       (stage !== 'league' || day === 'all' || m.matchday === Number(day)) &&
       (stage !== 'knockout' || round === 'all' || m.round === Number(round)) &&
       (stage === 'all' || m.stage === stage),
-  );
+  ), [t.matches, filter, stage, leg, day, round]);
+  const matchdays = useMemo(() => [...new Set(t.matches.filter((m) => m.stage === 'league').map((m) => m.matchday))]
+    .sort((a, b) => a - b), [t.matches]);
+  const groups = useMemo(() => (['league', 'knockout'] as const).map((s) => ({
+    stage: s, games: list.filter((m) => m.stage === s),
+  })), [list]);
   return (
     <>
       <div className="filter-bar">
@@ -143,9 +160,7 @@ export function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => vo
             onChange={(e) => setDay(e.target.value)}
           >
             <option value="all">All matchdays</option>
-            {[...new Set(t.matches.filter((m) => m.stage === 'league').map((m) => m.matchday))]
-              .sort((a, b) => a - b)
-              .map((d) => (
+            {matchdays.map((d) => (
                 <option key={d} value={d}>
                   Matchday {d}
                 </option>
@@ -161,8 +176,7 @@ export function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => vo
         </div>
       </div>
       {list.length ? (
-        <>{(['league', 'knockout'] as const).map((s) => {
-          const games = list.filter((m) => m.stage === s);
+        <>{groups.map(({ stage: s, games }) => {
           return games.length ? <section key={s}>
             {stage === 'all' && <h3>{s === 'league' ? 'League' : 'Knockout'}</h3>}
             <div className="matches-grid">{games.map((m) => <MatchCard key={m.id} match={m} t={t} onOpen={onOpen} />)}</div>
@@ -177,7 +191,7 @@ export function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => vo
       )}
     </>
   );
-}
+});
 export function ScoreModal({
   m,
   t,

@@ -60,7 +60,10 @@ async function body(request: Request) {
     throw new HttpError(400, 'Invalid request.');
   }
 }
-export async function handler(request: Request): Promise<Response> {
+export async function handler(
+  request: Request,
+  defer?: (task: () => Promise<void>) => void,
+): Promise<Response> {
   try {
     const path = new URL(request.url).pathname
       .replace(/^\/(?:\.netlify\/functions\/api|api)\/?/, '')
@@ -123,7 +126,8 @@ export async function handler(request: Request): Promise<Response> {
     if (request.method === 'GET' && path.length === 1) {
       const owner = await user(request);
       const tournaments = await db().begin(async (sql) => listOwned(sql, owner));
-      await cleanupLogos(owner, request);
+      if (defer) defer(() => cleanupLogos(owner, request));
+      else await cleanupLogos(owner, request);
       return json({ tournaments });
     }
     const code = path[1]?.toUpperCase();
@@ -151,7 +155,22 @@ export async function handler(request: Request): Promise<Response> {
             throw error;
         }
       }
+      const knownVersion = request.headers.get('X-Tournament-Version');
       const result = await db().begin('isolation level repeatable read read only', async (sql) => {
+        // The client version is only a transfer hint. Ownership is always read from
+        // the database after the normal authentication checks above.
+        if (path.length === 2 && knownVersion && /^[1-9]\d{0,9}$/.test(knownVersion)) {
+          const [current] =
+            await sql`select version, owner_id from tournaments where public_code=${code}`;
+          if (!current)
+            throw new HttpError(404, 'Tournament not found. Check the code and try again.');
+          if (current.version === Number(knownVersion))
+            return {
+              unchanged: true,
+              version: current.version,
+              canEdit: owner === current.owner_id,
+            };
+        }
         const found = await load(sql, code);
         if (!found) throw new HttpError(404, 'Tournament not found. Check the code and try again.');
         if (path[2] === 'audit') {

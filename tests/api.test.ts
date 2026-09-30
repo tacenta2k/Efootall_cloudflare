@@ -514,3 +514,88 @@ describe('automatic completion API', () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 });
+
+describe('version-aware refresh', () => {
+  const conditional = (version: string, token?: string, suffix = '') =>
+    new Request(`https://example.com/api/tournaments/${code}${suffix}`, {
+      headers: {
+        'X-Tournament-Version': version,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+  it('returns only current version and permissions without loading children when unchanged', async () => {
+    mocks.sql.mockResolvedValue([{ version: 2, owner_id: owner }]);
+    const response = await handler(conditional('2', 'valid'));
+    expect(await response.json()).toEqual({ unchanged: true, version: 2, canEdit: true });
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(mocks.getUser).toHaveBeenCalledWith('valid');
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(mocks.sql).toHaveBeenCalledTimes(1);
+  });
+  it.each([undefined, 'other'])(
+    'does not trust matching client versions for ownership: %s',
+    async (token) => {
+      mocks.sql.mockResolvedValue([{ version: 2, owner_id: owner }]);
+      if (token)
+        mocks.getUser.mockResolvedValue({ data: { user: { id: 'different-owner' } }, error: null });
+      expect(await (await handler(conditional('2', token))).json()).toEqual({
+        unchanged: true,
+        version: 2,
+        canEdit: false,
+      });
+      expect(mocks.load).not.toHaveBeenCalled();
+    },
+  );
+  it('updates permissions for revoked sessions without downloading unchanged children', async () => {
+    mocks.sql.mockResolvedValue([{ version: 2, owner_id: owner }]);
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: { status: 401 } });
+    expect(await (await handler(conditional('2', 'revoked'))).json()).toEqual({
+      unchanged: true,
+      version: 2,
+      canEdit: false,
+    });
+    expect(mocks.load).not.toHaveBeenCalled();
+  });
+  it('still reports authentication outages before database access', async () => {
+    mocks.getUser.mockRejectedValue(new Error('unavailable'));
+    expect((await handler(conditional('2', 'valid'))).status).toBe(503);
+    expect(mocks.begin).not.toHaveBeenCalled();
+  });
+  it('loads the normal complete snapshot in the same repeatable-read transaction when changed', async () => {
+    mocks.sql.mockResolvedValue([{ version: 3, owner_id: owner }]);
+    const response = await handler(conditional('2', 'valid'));
+    expect((await response.json()).tournament).toBeDefined();
+    expect(mocks.load).toHaveBeenCalledOnce();
+    expect(mocks.begin).toHaveBeenCalledOnce();
+    expect(mocks.begin.mock.calls[0][0]).toBe('isolation level repeatable read read only');
+  });
+  it('returns 404 for a deleted tournament even when a client supplies a version', async () => {
+    mocks.sql.mockResolvedValue([]);
+    expect((await handler(conditional('2'))).status).toBe(404);
+    expect(mocks.load).not.toHaveBeenCalled();
+  });
+  it.each(['0', '-1', 'NaN', '2x', '1.5', '99999999999999999999'])(
+    'ignores invalid version hint %s',
+    async (value) => {
+      expect((await (await handler(conditional(value))).json()).tournament).toBeDefined();
+      expect(mocks.load).toHaveBeenCalledOnce();
+      expect(mocks.sql).not.toHaveBeenCalled();
+    },
+  );
+  it('never uses the version shortcut to bypass audit authorization', async () => {
+    expect((await handler(conditional('2', undefined, '/audit'))).status).toBe(403);
+    expect(mocks.load).toHaveBeenCalledOnce();
+  });
+});
+
+it('registers list maintenance with the managed defer hook rather than awaiting it', async () => {
+  mocks.listOwned.mockResolvedValue([]);
+  const tasks: (() => Promise<void>)[] = [];
+  const req = request('GET', undefined, 'valid', 'tournaments');
+  const response = await handler(req, (task) => tasks.push(task));
+  expect(response.status).toBe(200);
+  expect(cleanupLogos).not.toHaveBeenCalled();
+  expect(tasks).toHaveLength(1);
+  await tasks[0]();
+  expect(cleanupLogos).toHaveBeenCalledWith(owner, req);
+});

@@ -1,6 +1,7 @@
 import { auth } from './auth';
 export { auth } from './auth';
 import type { Action, Player, Settings, Tournament } from './types';
+import { mergeSnapshot, type TournamentRefresh } from './tournamentRefresh';
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -21,7 +22,12 @@ export class TournamentConflictError extends ApiError {
     );
   }
 }
-export async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export async function request<T>(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  options: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+): Promise<T> {
   if (!navigator.onLine)
     throw new ApiError(0, "You're offline. Your entry is still here. Reconnect and try again.");
   const session = await auth?.auth.getSession();
@@ -31,11 +37,14 @@ export async function request<T>(path: string, method = 'GET', body?: unknown): 
     response = await fetch('/api/' + path, {
       method,
       headers: {
+        ...options.headers,
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15000),
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(15000)])
+        : AbortSignal.timeout(15000),
     });
   } catch {
     throw new ApiError(
@@ -58,6 +67,22 @@ export async function request<T>(path: string, method = 'GET', body?: unknown): 
 }
 export const getTournament = (code: string) =>
   request<Snapshot>(`tournaments/${encodeURIComponent(code)}`);
+export async function refreshTournament(
+  code: string,
+  current: Snapshot | null,
+  signal: AbortSignal,
+) {
+  const result = await request<TournamentRefresh>(
+    `tournaments/${encodeURIComponent(code)}`,
+    'GET',
+    undefined,
+    {
+      signal,
+      headers: current ? { 'X-Tournament-Version': String(current.tournament.version) } : undefined,
+    },
+  );
+  return mergeSnapshot(current, result);
+}
 export const create = (settings: Settings, players: Player[]) =>
   request<Snapshot>('tournaments', 'POST', { settings, players });
 export const change = (t: Tournament, action: Action, version = t.version) =>

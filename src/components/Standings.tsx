@@ -1,4 +1,5 @@
 import TeamLogo from './TeamLogo';
+import { memo } from 'react';
 import type { Match, Standing, Tournament } from '../lib/types';
 import { standings, played } from '../lib/engine';
 import { Modal, Empty } from './ui';
@@ -22,7 +23,7 @@ export function Form({ values }: { values: Standing['form'] }) {
     </div>
   );
 }
-export function Table({
+export const Table = memo(function Table({
   t,
   onPlayer,
   compact = false,
@@ -106,8 +107,14 @@ export function Table({
       )}
     </div>
   );
-}
-export function Statistics({ t, onPlayer }: { t: Tournament; onPlayer: (id: string) => void }) {
+});
+export const Statistics = memo(function Statistics({
+  t,
+  onPlayer,
+}: {
+  t: Tournament;
+  onPlayer: (id: string) => void;
+}) {
   const rows = standings(t).filter((r) => r.played);
   if (!rows.length)
     return (
@@ -165,7 +172,7 @@ export function Statistics({ t, onPlayer }: { t: Tournament; onPlayer: (id: stri
       </div>
     </>
   );
-}
+});
 export function Profile({
   id,
   t,

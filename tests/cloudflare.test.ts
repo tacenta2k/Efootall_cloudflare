@@ -43,7 +43,11 @@ it('isolates overlapping requests and reuses a client only within its request', 
   expect(firstClient).not.toBe(second);
   expect(firstClient.end).toHaveBeenCalledOnce();
   expect(clients.create).toHaveBeenCalledTimes(2);
-  expect(clients.create.mock.calls[0][1]).toMatchObject({ max: 2, prepare: false });
+  expect(clients.create.mock.calls[0][1]).toMatchObject({
+    max: 2,
+    prepare: false,
+    fetch_types: false,
+  });
   expect(clients.create.mock.calls[0][1]).not.toHaveProperty('ssl');
 });
 it('closes the client when request processing fails', async () => {
