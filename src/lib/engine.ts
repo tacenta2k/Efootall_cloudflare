@@ -1,4 +1,4 @@
-import type { Action, Match, Player, Settings, Standing, Tie, Tournament } from './types';
+import type { Action, KnockoutResolution, Match, Player, Settings, Standing, Tie, Tournament } from './types';
 import { actionSchema, setupSchema } from './validation';
 const id = () => crypto.randomUUID();
 function requireThat(condition: unknown, message: string): asserts condition {
@@ -233,6 +233,38 @@ function addRound(t: Tournament, pairs: string[][], round: number) {
   }
   t.status = pairs.length === 1 ? 'final' : 'knockout_active';
 }
+function setKnockoutResolution(t: Tournament, tie: Tie, decider: KnockoutResolution) {
+  const agg = aggregate(t, tie);
+  requireThat(
+    agg.complete && agg.a === agg.b,
+    'Only a completed, tied aggregate needs a decider.',
+  );
+  requireThat([tie.a, tie.b].includes(decider.winner), 'Winner must be a player in this tie.');
+  const resolution = knockoutResolution(t);
+  requireThat(
+    resolution === 'either' || resolution === decider.method,
+    'This decider is not allowed by the tournament rules. Use the configured knockout resolution.',
+  );
+  if (decider.method === 'penalties') {
+    requireThat(
+      decider.penaltiesA !== undefined &&
+        decider.penaltiesB !== undefined &&
+        decider.penaltiesA !== decider.penaltiesB,
+      'Enter a non-tied penalty score.',
+    );
+    requireThat(
+      decider.winner === (decider.penaltiesA > decider.penaltiesB ? tie.a : tie.b),
+      'Penalty winner does not match the score.',
+    );
+  }
+  tie.resolution = {
+    method: decider.method,
+    winner: decider.winner,
+    penaltiesA: decider.penaltiesA,
+    penaltiesB: decider.penaltiesB,
+    extraTime: decider.extraTime,
+  };
+}
 function updateKnockout(t: Tournament) {
   const round = Math.max(...t.ties.map((t) => t.round));
   const current = t.ties
@@ -245,7 +277,7 @@ function updateKnockout(t: Tournament) {
         ? tie.a
         : agg.b > agg.a
           ? tie.b
-          : (tie.resolution?.winner ?? null)
+          : tie.resolution?.method === 'score' ? null : (tie.resolution?.winner ?? null)
       : null;
   }
   if (!current.every((tie) => tie.winner)) return;
@@ -285,6 +317,11 @@ export function applyAction(original: Tournament, input: Action, now: string): T
     const m = t.matches.find((m) => m.id === action.matchId);
     requireThat(m, 'Match not found in this tournament.');
     if (m.stage === 'league') {
+      if (action.type === 'score')
+        requireThat(
+          action.knockoutResolution === undefined && action.extraTime === undefined,
+          'Knockout resolution and extra time apply only to knockout matches.',
+        );
       requireThat(
         ['league_active', 'league_complete'].includes(t.status) ||
           (t.status === 'completed' && !t.settings.knockout),
@@ -321,6 +358,24 @@ export function applyAction(original: Tournament, input: Action, now: string): T
       );
       m.leaguePenalties = needsLeaguePenalties ? (action.leaguePenalties ?? null) : null;
       if (m.stage === 'league') leagueOutcome(t, m); // Reject missing winner or unspecified points atomically.
+      else {
+        const tie = t.ties.find((tie) => tie.id === m.tieId)!;
+        if (action.knockoutResolution) {
+          requireThat(
+            action.extraTime === undefined || action.extraTime === action.knockoutResolution.extraTime,
+            'Extra time must match the knockout resolution.',
+          );
+          setKnockoutResolution(t, tie, action.knockoutResolution);
+        } else {
+          const agg = aggregate(t, tie);
+          if (agg.complete && agg.a !== agg.b && action.extraTime !== undefined)
+            tie.resolution = {
+              method: 'score',
+              winner: agg.a > agg.b ? tie.a : tie.b,
+              extraTime: action.extraTime,
+            };
+        }
+      }
     } else {
       m.homeScore = null;
       m.awayScore = null;
@@ -382,36 +437,7 @@ export function applyAction(original: Tournament, input: Action, now: string): T
       !t.ties.some((other) => other.round > tie.round),
       'A later knockout round already exists.',
     );
-    const agg = aggregate(t, tie);
-    requireThat(
-      agg.complete && agg.a === agg.b,
-      'Only a completed, tied aggregate needs a decider.',
-    );
-    requireThat([tie.a, tie.b].includes(action.winner), 'Winner must be a player in this tie.');
-    const resolution = knockoutResolution(t);
-    requireThat(
-      resolution === 'either' || resolution === action.method,
-      'This decider is not allowed by the tournament rules. Use the configured knockout resolution.',
-    );
-    if (action.method === 'penalties') {
-      requireThat(
-        action.penaltiesA !== undefined &&
-          action.penaltiesB !== undefined &&
-          action.penaltiesA !== action.penaltiesB,
-        'Enter a non-tied penalty score.',
-      );
-      requireThat(
-        action.winner === (action.penaltiesA > action.penaltiesB ? tie.a : tie.b),
-        'Penalty winner does not match the score.',
-      );
-    }
-    tie.resolution = {
-      method: action.method,
-      winner: action.winner,
-      penaltiesA: action.penaltiesA,
-      penaltiesB: action.penaltiesB,
-      extraTime: action.extraTime,
-    };
+    setKnockoutResolution(t, tie, action);
     updateKnockout(t);
   }
   if (action.type === 'reset') {

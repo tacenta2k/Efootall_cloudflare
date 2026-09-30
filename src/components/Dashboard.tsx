@@ -27,7 +27,7 @@ import {
 import { aggregate, standings, played } from '../lib/engine';
 import type { Action, Match } from '../lib/types';
 import { Brand, Empty, ErrorText, SectionTitle, statusLabel, TournamentStatus } from './ui';
-import { MatchCard, Matches, ScoreModal } from './Matches';
+import { MatchCard, Matches, ScoreModal, resolutionLabel } from './Matches';
 import { Profile, Statistics, Table, Form } from './Standings';
 import TournamentInfo from './TournamentInfo';
 const Admin = lazy(() => import('./Admin'));
@@ -305,11 +305,11 @@ export default function Dashboard({
                 <p>{t.settings.name} · A tournament to remember.</p>
                 {t.ties.length > 0 && (
                   <p>
-                    Final aggregate:{' '}
                     {(() => {
                       const tie = t.ties.at(-1)!,
-                        a = aggregate(t, tie);
-                      return `${t.players.find((p) => p.id === tie.a)?.name} ${a.a}–${a.b} ${t.players.find((p) => p.id === tie.b)?.name}`;
+                        a = aggregate(t, tie),
+                        label = t.settings.legs === 1 ? 'Final result' : 'Final aggregate';
+                      return `${label}: ${t.players.find((p) => p.id === tie.a)?.name} ${a.a}–${a.b} ${t.players.find((p) => p.id === tie.b)?.name}${tie.resolution ? ` · ${resolutionLabel(t, tie)}` : ''}`;
                     })()}
                   </p>
                 )}

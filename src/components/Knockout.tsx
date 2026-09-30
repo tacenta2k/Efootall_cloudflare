@@ -1,9 +1,9 @@
 import TeamLogo from './TeamLogo';
-import { useState } from 'react';
 import { Trophy } from 'lucide-react';
-import type { Action, Match, Tie, Tournament } from '../lib/types';
-import { aggregate, knockoutResolution } from '../lib/engine';
-import { Empty, ErrorText, Modal } from './ui';
+import type { Action, Match, Tournament } from '../lib/types';
+import { aggregate } from '../lib/engine';
+import { Empty } from './ui';
+import { resolutionLabel, roundLabel } from './Matches';
 export default function Knockout({
   t,
   admin,
@@ -15,7 +15,6 @@ export default function Knockout({
   onMatch: (m: Match) => void;
   onAction: (a: Action) => Promise<void>;
 }) {
-  const [resolve, setResolve] = useState<Tie | null>(null);
   if (!t.settings.knockout)
     return (
       <Empty title="A league race, all the way">
@@ -38,9 +37,7 @@ export default function Knockout({
             <span className="eyebrow">
               {round === rounds.length
                 ? 'THE FINAL'
-                : round === rounds.length - 1
-                  ? 'SEMI-FINALS'
-                  : 'QUARTER-FINALS'}
+                : roundLabel(t, round).toUpperCase()}
             </span>
             {t.ties
               .filter((tie) => tie.round === round)
@@ -78,24 +75,10 @@ export default function Knockout({
                           </button>
                         ))}
                     </div>
-                    {tie.resolution && (
-                      <p className="fine-print">
-                        {tie.resolution.method === 'penalties'
-                          ? `Penalties ${tie.resolution.penaltiesA}–${tie.resolution.penaltiesB} (in player order above)`
-                          : 'Winner confirmed by admin'}
-                        {tie.resolution.extraTime ? ' · after extra time' : ''}
-                      </p>
-                    )}
+                    {tie.resolution && <p className="fine-print">{resolutionLabel(t, tie)}</p>}
                     {agg.complete && agg.a === agg.b && !tie.winner && (
                       <div className="notice">
-                        {knockoutResolution(t) === 'penalties'
-                          ? 'Awaiting penalties — winner required'
-                          : 'Awaiting decider — winner required'}
-                        {admin && (
-                          <button className="button primary full" onClick={() => setResolve(tie)}>
-                            Resolve tied score
-                          </button>
-                        )}
+                        {admin ? 'Open either leg to record the winner.' : 'Awaiting decider — winner required'}
                       </div>
                     )}
                   </div>
@@ -111,116 +94,6 @@ export default function Knockout({
           </section>
         ))}
       </div>
-      {resolve && (
-        <Decider t={t} tie={resolve} onClose={() => setResolve(null)} onAction={onAction} />
-      )}
     </>
-  );
-}
-function Decider({
-  t,
-  tie,
-  onClose,
-  onAction,
-}: {
-  t: Tournament;
-  tie: Tie;
-  onClose: () => void;
-  onAction: (a: Action) => Promise<void>;
-}) {
-  const resolution = knockoutResolution(t);
-  const [method, setMethod] = useState<'penalties' | 'manual'>(
-      resolution === 'manual' ? 'manual' : 'penalties',
-    ),
-    [winner, setWinner] = useState(tie.a),
-    [a, setA] = useState(''),
-    [b, setB] = useState(''),
-    [extra, setExtra] = useState(false),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  return (
-    <Modal
-      title="Settle the tie"
-      onClose={() => {
-        if (!busy) onClose();
-      }}
-    >
-      <p className="muted">
-        The aggregate is level.{' '}
-        {resolution === 'penalties'
-          ? 'A penalty shootout is required to determine the winner.'
-          : 'Record the actual decider; a winner is required.'}
-      </p>
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError('');
-          try {
-            await onAction({
-              type: 'resolveTie',
-              tieId: tie.id,
-              method,
-              winner: method === 'penalties' ? (Number(a) > Number(b) ? tie.a : tie.b) : winner,
-              ...(method === 'penalties' ? { penaltiesA: Number(a), penaltiesB: Number(b) } : {}),
-              extraTime: extra,
-            });
-            onClose();
-          } catch (e) {
-            setError(e instanceof Error ? e.message : 'Unable to save decider.');
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label>
-          Decider
-          <select value={method} onChange={(e) => setMethod(e.target.value as typeof method)}>
-            {resolution !== 'manual' && <option value="penalties">Penalty shootout</option>}
-            {resolution !== 'penalties' && <option value="manual">Manual winner selection</option>}
-          </select>
-        </label>
-        {method === 'penalties' ? (
-          <div className="field-row">
-            {[tie.a, tie.b].map((id, i) => (
-              <label key={id}>
-                {t.players.find((p) => p.id === id)!.name} penalties
-                <input
-                  type="number"
-                  min="0"
-                  max="999"
-                  step="1"
-                  required
-                  value={i === 0 ? a : b}
-                  onChange={(e) => (i === 0 ? setA : setB)(e.target.value)}
-                />
-              </label>
-            ))}
-          </div>
-        ) : (
-          <label>
-            Confirmed winner
-            <select value={winner} onChange={(e) => setWinner(e.target.value)}>
-              {[tie.a, tie.b].map((id) => (
-                <option key={id} value={id}>
-                  {t.players.find((p) => p.id === id)!.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <label className="checkbox-label">
-          <input type="checkbox" checked={extra} onChange={(e) => setExtra(e.target.checked)} />
-          Extra time was played
-        </label>
-        <p className="fine-print">
-          Any extra-time goals must already be included in the match score.
-        </p>
-        <ErrorText message={error} />
-        <button className="button primary full" disabled={busy}>
-          {busy ? 'Saving decider…' : 'Confirm winner'}
-        </button>
-      </form>
-    </Modal>
   );
 }

@@ -41,6 +41,13 @@ export interface Match {
   leaguePenalties?: { home: number; away: number } | null;
   updatedAt: string | null;
 }
+export interface KnockoutResolution {
+  method: 'penalties' | 'manual';
+  winner: string;
+  penaltiesA?: number;
+  penaltiesB?: number;
+  extraTime: boolean;
+}
 export interface Tie {
   id: string;
   round: number;
@@ -49,7 +56,7 @@ export interface Tie {
   b: string;
   winner: string | null;
   resolution: {
-    method: 'penalties' | 'manual';
+    method: 'penalties' | 'manual' | 'score';
     winner: string;
     penaltiesA?: number;
     penaltiesB?: number;
@@ -94,6 +101,8 @@ export type Action =
       away: number;
       confirmEdit: boolean;
       leaguePenalties?: { home: number; away: number };
+      knockoutResolution?: KnockoutResolution;
+      extraTime?: boolean;
     }
   | { type: 'resetMatch'; matchId: string; confirmation: 'RESET' }
   | { type: 'advance' }

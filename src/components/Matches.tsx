@@ -1,10 +1,23 @@
 import TeamLogo from './TeamLogo';
 import { useEffect, useState } from 'react';
 import { Check, Pencil, ArrowRight, Clock } from 'lucide-react';
-import type { Action, Match, Tournament } from '../lib/types';
+import type { Action, Match, Tie, Tournament } from '../lib/types';
 import { aggregate, knockoutResolution, played } from '../lib/engine';
 import { ApiError } from '../lib/api';
 import { ErrorText, Modal, Empty } from './ui';
+export function roundLabel(t: Tournament, round: number) {
+  const remaining = Math.log2(t.settings.knockout) - round;
+  return remaining === 0 ? 'Final' : remaining === 1 ? 'Semi-finals' : remaining === 2 ? 'Quarter-finals' : `Round of ${2 ** (remaining + 1)}`;
+}
+export function resolutionLabel(t: Tournament, tie: Tie) {
+  const r = tie.resolution;
+  if (!r) return '';
+  const name = (id: string) => t.players.find((p) => p.id === id)?.name ?? 'Removed player';
+  const result = r.method === 'penalties'
+    ? `${name(tie.a)} ${r.penaltiesA}–${r.penaltiesB} ${name(tie.b)} on penalties · ${name(r.winner)} wins`
+    : r.method === 'manual' ? `${name(r.winner)} wins · confirmed by admin` : `${name(r.winner)} wins on score`;
+  return result + (r.extraTime ? ' · after extra time' : '');
+}
 export function MatchCard({
   match: m,
   t,
@@ -25,9 +38,7 @@ export function MatchCard({
         <span>
           {m.stage === 'league'
             ? `MATCHDAY ${m.matchday}`
-            : m.round === Math.log2(t.settings.knockout)
-              ? 'FINAL'
-              : `KNOCKOUT ROUND ${m.round}`}{' '}
+            : roundLabel(t, m.round).toUpperCase()}{' '}
           · LEG {m.leg}
         </span>
         <span className={played(m) ? 'match-done' : 'match-upcoming'}>
@@ -75,6 +86,7 @@ export function MatchCard({
           <strong>{b.name}</strong>
         </div>
       </div>
+      {tie?.resolution && <span className="fine-print">Tie result: {resolutionLabel(t, tie)}</span>}
       <span className="match-footer">
         {played(m) ? 'Match details' : 'View fixture'}
         <ArrowRight size={15} />
@@ -86,12 +98,14 @@ export function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => vo
   const [filter, setFilter] = useState('all'),
     [leg, setLeg] = useState('all'),
     [day, setDay] = useState('all'),
-    [stage, setStage] = useState('all');
+    [stage, setStage] = useState('all'),
+    [round, setRound] = useState('all');
   const list = t.matches.filter(
     (m) =>
       (filter === 'all' || (filter === 'completed') === played(m)) &&
-      (leg === 'all' || m.leg === Number(leg)) &&
-      (day === 'all' || m.matchday === Number(day)) &&
+      (stage !== 'league' || leg === 'all' || m.leg === Number(leg)) &&
+      (stage !== 'league' || day === 'all' || m.matchday === Number(day)) &&
+      (stage !== 'knockout' || round === 'all' || m.round === Number(round)) &&
       (stage === 'all' || m.stage === stage),
   );
   return (
@@ -105,9 +119,19 @@ export function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => vo
           ))}
         </div>
         <div className="filter-selects">
+          <label>Stage
+            <select aria-label="Filter by stage" value={stage} onChange={(e) => {
+              setStage(e.target.value); setLeg('all'); setDay('all'); setRound('all');
+            }}>
+              <option value="all">All stages</option>
+              <option value="league">League</option>
+              <option value="knockout">Knockout</option>
+            </select>
+          </label>
+          {stage === 'league' && <>
           <select aria-label="Filter by leg" value={leg} onChange={(e) => setLeg(e.target.value)}>
             <option value="all">All legs</option>
-            {Array.from({ length: Math.max(t.settings.repetitions, t.settings.legs) }, (_, i) => (
+            {Array.from({ length: t.settings.repetitions }, (_, i) => (
               <option key={i} value={i + 1}>
                 Leg {i + 1}
               </option>
@@ -119,7 +143,7 @@ export function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => vo
             onChange={(e) => setDay(e.target.value)}
           >
             <option value="all">All matchdays</option>
-            {[...new Set(t.matches.map((m) => m.matchday))]
+            {[...new Set(t.matches.filter((m) => m.stage === 'league').map((m) => m.matchday))]
               .sort((a, b) => a - b)
               .map((d) => (
                 <option key={d} value={d}>
@@ -127,23 +151,23 @@ export function Matches({ t, onOpen }: { t: Tournament; onOpen: (m: Match) => vo
                 </option>
               ))}
           </select>
-          <select
-            aria-label="Filter by stage"
-            value={stage}
-            onChange={(e) => setStage(e.target.value)}
-          >
-            <option value="all">All stages</option>
-            <option value="league">League</option>
-            <option value="knockout">Knockout</option>
-          </select>
+          </>}
+          {stage === 'knockout' && <label>Round
+            <select aria-label="Filter by knockout round" value={round} onChange={(e) => setRound(e.target.value)}>
+              <option value="all">All rounds</option>
+              {Array.from({ length: Math.log2(t.settings.knockout || 1) }, (_, i) => i + 1).map((r) => <option key={r} value={r}>{roundLabel(t, r)}</option>)}
+            </select>
+          </label>}
         </div>
       </div>
       {list.length ? (
-        <div className="matches-grid">
-          {list.map((m) => (
-            <MatchCard key={m.id} match={m} t={t} onOpen={onOpen} />
-          ))}
-        </div>
+        <>{(['league', 'knockout'] as const).map((s) => {
+          const games = list.filter((m) => m.stage === s);
+          return games.length ? <section key={s}>
+            {stage === 'all' && <h3>{s === 'league' ? 'League' : 'Knockout'}</h3>}
+            <div className="matches-grid">{games.map((m) => <MatchCard key={m.id} match={m} t={t} onOpen={onOpen} />)}</div>
+          </section> : null;
+        })}</>
       ) : (
         <Empty title="No fixtures here yet">
           {t.status === 'setup'
@@ -169,17 +193,32 @@ export function ScoreModal({
 }) {
   const a = t.players.find((p) => p.id === m.home) ?? { name: 'Removed player', avatar: '⚽' },
     b = t.players.find((p) => p.id === m.away) ?? { name: 'Removed player', avatar: '⚽' };
+  const tie = t.ties.find((x) => x.id === m.tieId);
+  const [initialResolution] = useState(tie?.resolution);
+  const configuredMethod = knockoutResolution(t);
+  const initialMethod = initialResolution?.method === 'manual' ? 'manual' : 'penalties';
+  const [method, setMethod] = useState<'penalties' | 'manual'>(configuredMethod === 'either' ? initialMethod : configuredMethod);
+  const [winner, setWinner] = useState(initialResolution?.winner ?? '');
+  const [extraTime, setExtraTime] = useState(initialResolution?.extraTime ?? false);
+  const initialHomePens = initialResolution?.method === 'penalties' ? (m.home === tie?.a ? initialResolution.penaltiesA : initialResolution.penaltiesB)?.toString() ?? '' : '';
+  const initialAwayPens = initialResolution?.method === 'penalties' ? (m.away === tie?.a ? initialResolution.penaltiesA : initialResolution.penaltiesB)?.toString() ?? '' : '';
+  const [knockoutHome, setKnockoutHome] = useState(initialHomePens);
+  const [knockoutAway, setKnockoutAway] = useState(initialAwayPens);
   const [home, setHome] = useState(m.homeScore?.toString() ?? ''),
     [away, setAway] = useState(m.awayScore?.toString() ?? ''),
     [penaltiesHome, setPenaltiesHome] = useState(m.leaguePenalties?.home.toString() ?? ''),
     [penaltiesAway, setPenaltiesAway] = useState(m.leaguePenalties?.away.toString() ?? ''),
-    [editing, setEditing] = useState(!played(m)),
+    [editing, setEditing] = useState(!played(m) || Boolean(tie && aggregate(t, tie).complete && !tie.winner)),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [reset, setReset] = useState(false),
     [version, setVersion] = useState(t.version),
     [conflict, setConflict] = useState(false);
   const current = t.matches.find((x) => x.id === m.id);
+  const validScores = /^\d+$/.test(home) && /^\d+$/.test(away) && Number(home) <= 999 && Number(away) <= 999;
+  const projected = tie && validScores ? aggregate({ ...t, matches: t.matches.map((x) => x.id === m.id ? { ...x, homeScore: Number(home), awayScore: Number(away) } : x) }, tie) : null;
+  const needsKnockoutDecider = Boolean(projected?.complete && projected.a === projected.b);
+  const effectiveMethod = configuredMethod === 'either' ? method : configuredMethod;
   const needsLeaguePenalties =
     m.stage === 'league' &&
     t.settings.leagueDrawsAllowed === false &&
@@ -190,6 +229,10 @@ export function ScoreModal({
   const policyError =
     'League penalty points are not configured. This tied result cannot be finalized until an explicit points policy is configured.';
   const dirty =
+    method !== (configuredMethod === 'either' ? initialMethod : configuredMethod) ||
+    winner !== (initialResolution?.winner ?? '') ||
+    extraTime !== (initialResolution?.extraTime ?? false) ||
+    knockoutHome !== initialHomePens || knockoutAway !== initialAwayPens ||
     home !== (m.homeScore?.toString() ?? '') ||
     away !== (m.awayScore?.toString() ?? '') ||
     penaltiesHome !== (m.leaguePenalties?.home.toString() ?? '') ||
@@ -231,7 +274,7 @@ export function ScoreModal({
   return (
     <Modal title={admin && !locked ? 'Record the result' : 'Match details'} onClose={close}>
       <div className="match-context">
-        {m.stage === 'league' ? `League · Matchday ${m.matchday}` : `Knockout · Round ${m.round}`} ·
+        {m.stage === 'league' ? `League · Matchday ${m.matchday}` : `Knockout · ${roundLabel(t, m.round)}`} ·
         Leg {m.leg}
       </div>
       {played(m) && !editing && (
@@ -264,12 +307,28 @@ export function ScoreModal({
             setError('Enter penalty scores from 0 to 999 that determine a winner.');
             return;
           }
+          if (needsKnockoutDecider && (effectiveMethod === 'penalties'
+            ? !/^\d+$/.test(knockoutHome) || !/^\d+$/.test(knockoutAway) || Number(knockoutHome) > 999 || Number(knockoutAway) > 999 || Number(knockoutHome) === Number(knockoutAway)
+            : winner !== tie?.a && winner !== tie?.b)) {
+            setError(effectiveMethod === 'penalties' ? 'Enter penalty scores from 0 to 999 that determine a winner.' : 'Select the confirmed winner.');
+            return;
+          }
           void save({
             type: 'score',
             matchId: m.id,
             home: Number(home),
             away: Number(away),
             confirmEdit: played(m) || Boolean(current && played(current)),
+            ...(m.stage === 'knockout' ? { extraTime } : {}),
+            ...(needsKnockoutDecider && tie ? { knockoutResolution: {
+              method: effectiveMethod,
+              winner: effectiveMethod === 'penalties' ? (Number(knockoutHome) > Number(knockoutAway) ? m.home : m.away) : winner,
+              ...(effectiveMethod === 'penalties' ? {
+                penaltiesA: Number(m.home === tie.a ? knockoutHome : knockoutAway),
+                penaltiesB: Number(m.home === tie.b ? knockoutHome : knockoutAway),
+              } : {}),
+              extraTime,
+            } } : {}),
             ...(needsLeaguePenalties
               ? { leaguePenalties: { home: Number(penaltiesHome), away: Number(penaltiesAway) } }
               : {}),
@@ -321,6 +380,35 @@ export function ScoreModal({
             )}
           </label>
         </div>
+        {tie && admin && editing && !locked && <>
+          {projected && <p className="notice">{t.settings.legs === 1 ? 'Result' : 'Aggregate'}: {t.players.find((p) => p.id === tie.a)?.name} {projected.a}–{projected.b} {t.players.find((p) => p.id === tie.b)?.name}{!projected.complete && ' · awaiting remaining leg'}</p>}
+          <label className="checkbox-label">
+            <input type="checkbox" checked={extraTime} onChange={(e) => setExtraTime(e.target.checked)} />
+            Extra time was played
+          </label>
+          <p className="fine-print">Include extra-time goals in the match scores above. Penalties do not count toward goals.</p>
+          {needsKnockoutDecider && <>
+            <h3>{t.settings.legs === 1 ? 'Tied result' : 'Tied aggregate'} · winner required</h3>
+            <label>Decider
+              <select value={effectiveMethod} onChange={(e) => setMethod(e.target.value as typeof method)}>
+                {configuredMethod !== 'manual' && <option value="penalties">Penalty shootout</option>}
+                {configuredMethod !== 'penalties' && <option value="manual">Manual winner selection</option>}
+              </select>
+            </label>
+            {effectiveMethod === 'penalties' ? <div className="field-row">
+              <label>{a.name} penalties<input type="number" inputMode="numeric" min="0" max="999" step="1" required value={knockoutHome} onChange={(e) => setKnockoutHome(e.target.value)} /></label>
+              <label>{b.name} penalties<input type="number" inputMode="numeric" min="0" max="999" step="1" required value={knockoutAway} onChange={(e) => setKnockoutAway(e.target.value)} /></label>
+            </div> : <label>Confirmed winner<select required value={winner} onChange={(e) => setWinner(e.target.value)}>
+              <option value="">Select winner</option>
+              <option value={m.home}>{a.name}</option><option value={m.away}>{b.name}</option>
+            </select></label>}
+          </>}
+        </>}
+        {tie && (!editing || !admin || locked) && <p className="notice">
+          {t.settings.legs === 1 ? 'Result' : 'Aggregate'}: {t.players.find((p) => p.id === tie.a)?.name} {aggregate(t, tie).a}–{aggregate(t, tie).b} {t.players.find((p) => p.id === tie.b)?.name}.
+          {' '}{resolutionLabel(t, tie)}
+          {aggregate(t, tie).complete && !tie.winner && ' Awaiting decider — winner required.'}
+        </p>}
         {needsLeaguePenalties && admin && editing && !locked && (
           <>
             <h3>League penalty shootout</h3>
@@ -385,7 +473,7 @@ export function ScoreModal({
                     ? 'Changing this result will recalculate standings and statistics.'
                     : 'Check both scores before saving.'}
                   {m.stage === 'knockout' &&
-                    ' Include extra-time goals here, but not penalties. If the completed aggregate is tied, the tie remains awaiting a winner: record its decider in Knockout. Every round requires a winner using the configured knockout decider.'}
+                    ' A completed tied result requires the decider above. Scores and winner are saved together.'}
                 </p>
                 <button
                   className="button primary full"
@@ -442,8 +530,9 @@ export function ScoreModal({
           <div className="notice">
             <p>
               Latest saved result: {current?.homeScore ?? '—'} – {current?.awayScore ?? '—'}.{' '}
-              {current?.leaguePenalties &&
-                `Penalties ${current.leaguePenalties.home}–${current.leaguePenalties.away}. `}
+               {current?.leaguePenalties &&
+                 `Penalties ${current.leaguePenalties.home}–${current.leaguePenalties.away}. `}
+               {tie && resolutionLabel(t, tie)}{' '}
               Your entered scores above are unchanged.
             </p>
             <button

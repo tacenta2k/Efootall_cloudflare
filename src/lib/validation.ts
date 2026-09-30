@@ -60,6 +60,13 @@ export const setupSchema = z
       });
   });
 const score = z.number().int().min(0).max(999);
+const knockoutResolutionFields = {
+  winner: z.string().uuid(),
+  method: z.enum(['penalties', 'manual']),
+  penaltiesA: score.optional(),
+  penaltiesB: score.optional(),
+  extraTime: z.boolean(),
+};
 export const actionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('start') }).strict(),
   z
@@ -77,6 +84,8 @@ export const actionSchema = z.discriminatedUnion('type', [
       home: score,
       away: score,
       confirmEdit: z.boolean(),
+      knockoutResolution: z.object(knockoutResolutionFields).strict().optional(),
+      extraTime: z.boolean().optional(),
       leaguePenalties: z
         .object({ home: score, away: score })
         .strict()
@@ -99,11 +108,7 @@ export const actionSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('resolveTie'),
       tieId: z.string().uuid(),
-      winner: z.string().uuid(),
-      method: z.enum(['penalties', 'manual']),
-      penaltiesA: score.optional(),
-      penaltiesB: score.optional(),
-      extraTime: z.boolean(),
+      ...knockoutResolutionFields,
     })
     .strict(),
   z

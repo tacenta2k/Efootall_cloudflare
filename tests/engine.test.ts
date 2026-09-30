@@ -334,6 +334,111 @@ describe('knockout stage integrity', () => {
     expect(t.status).toBe('league_active');
   });
 });
+describe('atomic knockout scoring', () => {
+  it('saves semifinal and final penalties atomically and seeds only known winners', () => {
+    let t = act(complete(make(4, 4)), { type: 'advance' });
+    t.settings.resolution = 'penalties';
+    const semis = [...t.ties];
+    const scoreTie = (tie: (typeof t.ties)[number]) => {
+      const match = t.matches.find((m) => m.tieId === tie.id)!;
+      return act(t, {
+        type: 'score', matchId: match.id, home: 2, away: 2, confirmEdit: false,
+        knockoutResolution: {
+          method: 'penalties', winner: tie.b, penaltiesA: 3, penaltiesB: 4, extraTime: true,
+        },
+      });
+    };
+    const version = t.version;
+    t = scoreTie(semis[0]);
+    expect(t.version).toBe(version + 1);
+    expect(t.ties).toHaveLength(2);
+    expect(t.ties[0].winner).toBe(semis[0].b);
+    expect(t.champion).toBeNull();
+    t = scoreTie(semis[1]);
+    const final = t.ties.at(-1)!;
+    expect([final.a, final.b]).toEqual(semis.map((tie) => tie.b));
+    expect(t.status).toBe('final');
+    t = scoreTie(final);
+    expect(t.status).toBe('completed');
+    expect(t.champion).toBe(final.b);
+    expect(t.ties.at(-1)?.resolution).toMatchObject({ method: 'penalties', extraTime: true });
+  });
+  it('keeps a missing decider pending even after every semifinal score is saved', () => {
+    let t = act(complete(make(4, 4)), { type: 'advance' });
+    for (const match of t.matches.filter((m) => m.stage === 'knockout'))
+      t = act(t, { type: 'score', matchId: match.id, home: 0, away: 0, confirmEdit: false });
+    expect(t.ties).toHaveLength(2);
+    expect(t.ties.every((tie) => tie.winner === null)).toBe(true);
+    expect(t.status).toBe('knockout_active');
+    expect(t.champion).toBeNull();
+  });
+  it('validates complete aggregates and tie-oriented penalties on a reversed second leg atomically', () => {
+    let t = act(complete(make(2, 2, 2)), { type: 'advance' });
+    const tie = t.ties[0];
+    const games = t.matches.filter((m) => m.tieId === tie.id);
+    const decider = { method: 'penalties' as const, winner: tie.b, penaltiesA: 3, penaltiesB: 4, extraTime: false };
+    const first: Extract<Action, { type: 'score' }> = {
+      type: 'score', matchId: games[0].id, home: 2, away: 1, confirmEdit: false,
+    };
+    expect(() => act(t, { ...first, knockoutResolution: decider })).toThrow('completed, tied aggregate');
+    expect(t.matches.find((m) => m.id === games[0].id)?.homeScore).toBeNull();
+    t = act(t, first);
+    const second = { ...first, matchId: games[1].id };
+    const before = structuredClone(t);
+    expect(games[1].home).toBe(tie.b);
+    expect(() => act(t, { ...second, home: 1, knockoutResolution: decider })).toThrow('completed, tied aggregate');
+    for (const invalid of [
+      { ...decider, winner: tie.a },
+      { ...decider, winner: crypto.randomUUID() },
+      { ...decider, penaltiesA: 4 },
+      { ...decider, penaltiesB: undefined },
+    ]) expect(() => act(t, { ...second, knockoutResolution: invalid })).toThrow();
+    t.settings.resolution = 'manual';
+    expect(() => act(t, { ...second, knockoutResolution: decider })).toThrow('not allowed');
+    t.settings.resolution = before.settings.resolution;
+    expect(t).toEqual(before);
+    t = act(t, { ...second, knockoutResolution: decider });
+    expect(aggregate(t, t.ties[0])).toEqual({ a: 3, b: 3, complete: true });
+    expect(t.champion).toBe(tie.b);
+  });
+  it('clears deciders on edits/reset and stores extra time for the actual aggregate winner', () => {
+    let t = act(complete(make(2, 2, 2)), { type: 'advance' });
+    const tie = t.ties[0];
+    const games = t.matches.filter((m) => m.tieId === tie.id);
+    t = act(t, { type: 'score', matchId: games[0].id, home: 2, away: 0, confirmEdit: false });
+    const second: Extract<Action, { type: 'score' }> = {
+      type: 'score', matchId: games[1].id, home: 1, away: 0, confirmEdit: false, extraTime: true,
+    };
+    t = act(t, second);
+    expect(t.champion).toBe(tie.a);
+    expect(t.ties[0].resolution).toEqual({ method: 'score', winner: tie.a, extraTime: true });
+    t = act(t, { ...second, home: 2, confirmEdit: true, extraTime: false });
+    expect(t.ties[0].resolution).toBeNull();
+    expect(t.ties[0].winner).toBeNull();
+    expect(t.champion).toBeNull();
+    t = act(t, { ...second, home: 2, confirmEdit: true,
+      knockoutResolution: { method: 'manual', winner: tie.b, extraTime: true },
+    });
+    expect(t.champion).toBe(tie.b);
+    const reset = act(t, { type: 'resetMatch', matchId: games[0].id, confirmation: 'RESET' });
+    expect(reset.ties[0]).toMatchObject({ resolution: null, winner: null });
+    expect(reset.champion).toBeNull();
+    t = act(t, { ...second, home: 0, confirmEdit: true, extraTime: undefined });
+    expect(t.ties[0].resolution).toBeNull();
+    expect(t.champion).toBe(tie.a);
+  });
+  it('rejects knockout-only fields on league scores, including extraTime false', () => {
+    const t = act(make(2), { type: 'start' });
+    const score: Extract<Action, { type: 'score' }> = {
+      type: 'score', matchId: t.matches[0].id, home: 1, away: 1, confirmEdit: false,
+    };
+    expect(() => act(t, { ...score, extraTime: false })).toThrow('only to knockout');
+    expect(() => act(t, { ...score, knockoutResolution: {
+      method: 'manual', winner: t.players[0].id, extraTime: false,
+    } })).toThrow('only to knockout');
+    expect(t.matches.every((m) => !played(m))).toBe(true);
+  });
+});
 describe('validation and setup', () => {
   it.each([-1, 1.1, 1000, NaN, Infinity, '2', null])('rejects invalid score %s', (home) => {
     expect(
