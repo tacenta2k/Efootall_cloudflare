@@ -1,0 +1,25 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "efootall-cloudflare",
+	"main": "worker/index.ts",
+	"compatibility_date": "2026-09-26",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api",
+			"/api/*"
+		],
+	},
+	"hyperdrive": [
+		{
+			"binding": "HYPERDRIVE",
+			// Placeholder only. Replace with an actual Hyperdrive configuration ID before deployment.
+			"id": "f2142af0ad6746cf91ea3ee0d15aa446",
+		},
+	],
+}

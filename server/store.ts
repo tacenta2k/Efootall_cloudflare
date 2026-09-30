@@ -1,16 +1,45 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import postgres from 'postgres';
 import type { Tournament } from '../src/lib/types';
-import { databaseConfigured, serverEnv } from './config';
-let connection: ReturnType<typeof postgres> | undefined;
+import { cloudflareBindings, databaseConfigured, serverEnv } from './config';
+type Connection = ReturnType<typeof postgres>;
+const requests = new AsyncLocalStorage<{ connection?: Connection }>();
+// Retained only for the existing Netlify/Node entry point.
+let connection: Connection | undefined;
+
+export function withRequestDatabase<T>(run: () => Promise<T>): Promise<T> {
+  return requests.run({}, async () => {
+    const state = requests.getStore()!;
+    try {
+      return await run();
+    } finally {
+      // Close only this request's client; Hyperdrive owns the origin connection pool.
+      // Cleanup must not turn an already committed mutation into an apparent failure.
+      try {
+        await state.connection?.end({ timeout: 1 });
+      } catch {
+        console.warn('Database client cleanup failed.');
+      }
+    }
+  });
+}
+
 export function db() {
   if (!databaseConfigured()) throw new Error('SERVER_NOT_CONFIGURED');
-  return (connection ??= postgres(serverEnv('DATABASE_URL')!, {
-    ssl: 'require',
-    max: 2,
-    prepare: false,
-    idle_timeout: 20,
-    connect_timeout: 10,
-  }));
+  const state = requests.getStore();
+  const cloudflare = cloudflareBindings();
+  if (cloudflare && !state) throw new Error('DATABASE_REQUEST_SCOPE_REQUIRED');
+  const create = () =>
+    postgres(serverEnv('DATABASE_URL')!, {
+      // Hyperdrive manages TLS to PostgreSQL; its Worker-facing connection is local.
+      ...(cloudflare ? {} : { ssl: 'require' as const }),
+      max: 2,
+      prepare: false,
+      idle_timeout: 20,
+      connect_timeout: 10,
+    });
+  if (state) return (state.connection ??= create());
+  return (connection ??= create());
 }
 export type Tx = postgres.TransactionSql;
 export async function deleteOwned(sql: Tx, code: string, owner: string): Promise<boolean> {

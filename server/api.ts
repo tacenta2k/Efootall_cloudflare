@@ -6,7 +6,7 @@ import { z, ZodError } from 'zod';
 import { applyAction, createTournament } from '../src/lib/engine';
 import { actionSchema, setupSchema } from '../src/lib/validation';
 import { db, load, save, listOwned, deleteOwned } from './store';
-import { databaseConfigured, serverAuthConfig } from './config';
+import { cloudflareBindings, databaseConfigured, serverAuthConfig } from './config';
 class HttpError extends Error {
   constructor(
     public status: number,
@@ -76,7 +76,11 @@ export async function handler(request: Request): Promise<Response> {
           checks: { authentication: auth.error === null, database },
           errors: [
             auth.error,
-            database ? null : 'Set a valid DATABASE_URL in Netlify Functions scope and redeploy.',
+            database
+              ? null
+              : cloudflareBindings()
+                ? 'Configure the HYPERDRIVE binding for this Worker.'
+                : 'Set a valid DATABASE_URL in Netlify Functions scope and redeploy.',
           ].filter(Boolean),
         },
         configured ? 200 : 503,

@@ -13,5 +13,13 @@
     "noEmit": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "server", "netlify", "tests", "vite.config.ts", "playwright.config.ts"]
+  "include": [
+    "src",
+    "server",
+    "netlify",
+    "tests",
+    "vite.config.ts",
+    "playwright.config.ts",
+    "worker"
+  ]
 }
