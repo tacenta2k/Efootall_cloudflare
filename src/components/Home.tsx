@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { Brand, Modal, ErrorText } from './ui';
 import { getTournament } from '../lib/api';
+import { handleInternalLink, navigate } from '../lib/navigation';
+import { captureNavigationAuth, makeSnapshotHandoff } from '../lib/navigationSnapshot';
 export default function Home({
   onCreate,
   onAuth,
@@ -223,7 +225,7 @@ export default function Home({
             <h2>Recently opened</h2>
             <div className="recent-list">
               {recent.map((t) => (
-                <a key={t.code} href={'/t/' + t.code}>
+                <a key={t.code} href={'/t/' + t.code} onClick={handleInternalLink}>
                   <Trophy size={20} />
                   <div>
                     <strong>{t.name}</strong>
@@ -276,9 +278,10 @@ export default function Home({
               e.preventDefault();
               setBusy(true);
               setError('');
+              const generation = captureNavigationAuth();
               try {
                 const data = await getTournament(code.trim().toUpperCase());
-                location.assign('/t/' + data.tournament.code);
+                navigate('/t/' + data.tournament.code, makeSnapshotHandoff(data, generation));
               } catch (e) {
                 setError(e instanceof Error ? e.message : 'Tournament not found.');
               } finally {

@@ -6,9 +6,14 @@ import MyTournaments from './components/MyTournaments';
 import Home from './components/Home';
 import Auth from './components/Auth';
 import { Modal } from './components/ui';
+import { handleInternalLink, navigate, subscribeNavigation } from './lib/navigation';
+import { invalidateNavigationSnapshots, type SnapshotHandoff } from './lib/navigationSnapshot';
 const Wizard = lazy(() => import('./components/Wizard'));
 const Dashboard = lazy(() => import('./components/Dashboard'));
 export default function App() {
+  const [pathname, setPathname] = useState(() => location.pathname);
+  const [initialCallback, setInitialCallback] = useState(wasAuthCallback);
+  const [pendingSnapshot, setPendingSnapshot] = useState<SnapshotHandoff | undefined>();
   const [showAuth, setShowAuth] = useState(false),
     [signedIn, setSignedIn] = useState(false),
     [authReady, setAuthReady] = useState(!auth),
@@ -29,6 +34,13 @@ export default function App() {
     });
   const lastAuth = useRef({ userId: '', token: '' });
   useEffect(() => {
+    return subscribeNavigation((snapshot) => {
+      setInitialCallback(false);
+      setPathname(location.pathname);
+      setPendingSnapshot(snapshot);
+    });
+  }, []);
+  useEffect(() => {
     let active = true;
     let eventReceived = false;
     const sub = auth?.auth.onAuthStateChange((event, session) => {
@@ -45,6 +57,7 @@ export default function App() {
         event === 'USER_UPDATED'
       ) {
         lastAuth.current = next;
+        invalidateNavigationSnapshots();
         setAuthRevision((r) => r + 1);
       }
       if (session) {
@@ -66,6 +79,7 @@ export default function App() {
           };
           if (next.userId !== lastAuth.current.userId || next.token !== lastAuth.current.token) {
             lastAuth.current = next;
+            invalidateNavigationSnapshots();
             setAuthRevision((r) => r + 1);
           }
         }
@@ -105,7 +119,7 @@ export default function App() {
       return () => clearTimeout(timeout);
     }
   }, [intro]);
-  const match = location.pathname.match(/^\/t\/([^/]+)(?:\/admin)?\/?$/);
+  const match = pathname.match(/^\/t\/([^/]+)(?:\/admin)?\/?$/);
   return (
     <>
       {offline && (
@@ -131,18 +145,18 @@ export default function App() {
               Retry
             </button>
           </div>
-        ) : location.pathname === '/create' && !wasAuthCallback ? (
-          <Wizard onAuth={() => setShowAuth(true)} signedIn={signedIn} />
+        ) : pathname === '/create' && !initialCallback ? (
+          <Wizard onAuth={() => setShowAuth(true)} signedIn={signedIn} onNavigate={navigate} />
         ) : match ? (
           <Dashboard
+            key={pathname}
             code={decodeURIComponent(match[1]).toUpperCase()}
             onAuth={() => setShowAuth(true)}
             authRevision={authRevision}
             authIdentity={userId}
+            initialSnapshot={pendingSnapshot}
           />
-        ) : location.pathname === '/' ||
-          location.pathname === '/auth/callback' ||
-          wasAuthCallback ? (
+        ) : pathname === '/' || pathname === '/auth/callback' || initialCallback ? (
           signedIn ? (
             <MyTournaments key={userId} onAuth={() => setShowAuth(true)} />
           ) : (
@@ -155,7 +169,9 @@ export default function App() {
         ) : (
           <div className="page-loading">
             <h1>Page not found</h1>
-            <a href="/">Back to Touchline</a>
+            <a href="/" onClick={handleInternalLink}>
+              Back to Touchline
+            </a>
           </div>
         )}
       </Suspense>

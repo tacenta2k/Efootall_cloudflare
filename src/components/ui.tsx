@@ -1,9 +1,10 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { Status } from '../lib/types';
 import { X, ArrowUpRight, Trophy } from 'lucide-react';
+import { handleInternalLink } from '../lib/navigation';
 export function Brand({ small = false }: { small?: boolean }) {
   return (
-    <a className="brand" href="/" aria-label="Touchline home">
+    <a className="brand" href="/" aria-label="Touchline home" onClick={handleInternalLink}>
       <img src="/icon.svg" alt="" />
       <span>
         touchline<span className="brand-dot">.</span>

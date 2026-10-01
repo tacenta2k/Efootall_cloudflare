@@ -29,11 +29,32 @@ import { mergeSnapshot } from '../lib/tournamentRefresh';
 import { aggregate, standings, played } from '../lib/engine';
 import type { Action, Match } from '../lib/types';
 import { Brand, Empty, ErrorText, SectionTitle, statusLabel, TournamentStatus } from './ui';
+import { handleInternalLink } from '../lib/navigation';
+import { readNavigationSnapshot, type SnapshotHandoff } from '../lib/navigationSnapshot';
 import { MatchCard, Matches, ScoreModal, resolutionLabel } from './Matches';
 import { Profile, Statistics, Table, Form } from './Standings';
 import TournamentInfo from './TournamentInfo';
 const Admin = lazy(() => import('./Admin'));
 const Knockout = lazy(() => import('./Knockout'));
+function rememberTournament(code: string, snapshot: Snapshot) {
+  try {
+    const recent = JSON.parse(localStorage.getItem('touchline-recent') ?? '[]') as {
+      code: string;
+      name: string;
+    }[];
+    localStorage.setItem(
+      'touchline-recent',
+      JSON.stringify(
+        [
+          { code, name: snapshot.tournament.settings.name },
+          ...recent.filter((r) => r.code !== code),
+        ].slice(0, 5),
+      ),
+    );
+  } catch {
+    /* Optional convenience only. */
+  }
+}
 const tabs = [
   ['home', 'Overview', LayoutDashboard],
   ['table', 'Standings', ListOrdered],
@@ -48,13 +69,19 @@ export default function Dashboard({
   onAuth,
   authRevision,
   authIdentity,
+  initialSnapshot,
 }: {
   code: string;
   onAuth: () => void;
   authRevision: number;
   authIdentity: string;
+  initialSnapshot?: SnapshotHandoff;
 }) {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
+  const [initial] = useState(() => ({
+    snapshot: readNavigationSnapshot(initialSnapshot, code),
+    revision: authRevision,
+  }));
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(initial.snapshot),
     [error, setError] = useState(''),
     [tab, setTab] = useState(location.pathname.endsWith('/admin') ? 'admin' : 'home'),
     [match, setMatch] = useState<Match | null>(null),
@@ -62,12 +89,14 @@ export default function Dashboard({
     [notice, setNotice] = useState(''),
     [refreshing, setRefreshing] = useState(false),
     [lastSync, setLastSync] = useState<Date | null>(null),
-    [validatedIdentity, setValidatedIdentity] = useState<string | null>(null);
+    [validatedIdentity, setValidatedIdentity] = useState<string | null>(
+      initial.snapshot ? authIdentity : null,
+    );
   const authGeneration = useRef(authRevision);
   authGeneration.current = authRevision;
   const identity = useRef(authIdentity);
   identity.current = authIdentity;
-  const latest = useRef<Snapshot | null>(null),
+  const latest = useRef<Snapshot | null>(initial.snapshot),
     inFlight = useRef<{ revision: number; controller: AbortController } | null>(null);
   const accept = useCallback((s: Snapshot, revision: number) => {
     if (revision !== authGeneration.current) return;
@@ -91,23 +120,7 @@ export default function Dashboard({
       if (inFlight.current !== flight || revision !== authGeneration.current) return;
       accept(s, revision);
       setError('');
-      try {
-        const recent = JSON.parse(localStorage.getItem('touchline-recent') ?? '[]') as {
-          code: string;
-          name: string;
-        }[];
-        localStorage.setItem(
-          'touchline-recent',
-          JSON.stringify(
-            [
-              { code, name: s.tournament.settings.name },
-              ...recent.filter((r) => r.code !== code),
-            ].slice(0, 5),
-          ),
-        );
-      } catch {
-        /* Optional convenience only. */
-      }
+      rememberTournament(code, s);
     } catch (e) {
       if (inFlight.current === flight && revision === authGeneration.current)
         setError(e instanceof Error ? e.message : 'Unable to load tournament.');
@@ -136,8 +149,14 @@ export default function Dashboard({
     };
   }, [refresh]);
   useEffect(() => {
+    // The initial revision remains the baseline during StrictMode effect replay.
+    // Later auth revisions must revalidate even while the handoff prop is retained.
+    if (initial.snapshot && authRevision === initial.revision) {
+      rememberTournament(code, initial.snapshot);
+      return;
+    }
     void refresh();
-  }, [refresh, authRevision]);
+  }, [refresh, authRevision, initial, code]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(''), 4500);
@@ -211,7 +230,7 @@ export default function Dashboard({
               Try again
             </button>
           )}
-          <a className="text-button" href="/">
+          <a className="text-button" href="/" onClick={handleInternalLink}>
             Back to home
           </a>
         </div>
@@ -254,7 +273,7 @@ export default function Dashboard({
             <br />
             One competition.
           </p>
-          <a className="text-button" href="/">
+          <a className="text-button" href="/" onClick={handleInternalLink}>
             Back to home
             <ArrowRight size={16} />
           </a>

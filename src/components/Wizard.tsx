@@ -17,6 +17,12 @@ import { create, auth } from '../lib/api';
 import { defaultSettings, type Player, type Settings, type TieRule } from '../lib/types';
 import { setupSchema } from '../lib/validation';
 import { Brand, ErrorText } from './ui';
+import { handleInternalLink } from '../lib/navigation';
+import {
+  captureNavigationAuth,
+  makeSnapshotHandoff,
+  type SnapshotHandoff,
+} from '../lib/navigationSnapshot';
 export const ruleNames: Record<TieRule, string> = {
   points: 'Points',
   gd: 'Goal difference',
@@ -257,7 +263,15 @@ export function KnockoutOptions({
     </div>
   );
 }
-export default function Wizard({ onAuth, signedIn }: { onAuth: () => void; signedIn: boolean }) {
+export default function Wizard({
+  onAuth,
+  signedIn,
+  onNavigate,
+}: {
+  onAuth: () => void;
+  signedIn: boolean;
+  onNavigate: (path: string, snapshot?: SnapshotHandoff) => void;
+}) {
   const [step, setStep] = useState(0),
     [countText, setCountText] = useState('4'),
     [s, setS] = useState<Settings>({ ...defaultSettings }),
@@ -296,7 +310,7 @@ export default function Wizard({ onAuth, signedIn }: { onAuth: () => void; signe
     <div className="wizard-page">
       <header className="site-header">
         <Brand />
-        <a className="text-button" href="/">
+        <a className="text-button" href="/" onClick={handleInternalLink}>
           Exit setup
         </a>
       </header>
@@ -542,9 +556,13 @@ export default function Wizard({ onAuth, signedIn }: { onAuth: () => void; signe
                   return;
                 }
                 setBusy(true);
+                const generation = captureNavigationAuth();
                 try {
                   const result = await create(s, players);
-                  location.assign('/t/' + result.tournament.code + '/admin');
+                  onNavigate(
+                    '/t/' + result.tournament.code + '/admin',
+                    makeSnapshotHandoff(result, generation),
+                  );
                 } catch (e) {
                   setError(e instanceof Error ? e.message : 'Unable to create tournament.');
                 } finally {

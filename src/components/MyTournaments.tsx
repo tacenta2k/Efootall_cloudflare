@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Trophy, Trash2 } from 'lucide-react';
 import { deleteTournament, getMyTournaments, type OwnedTournament } from '../lib/api';
 import { Brand, ErrorText, Modal, TournamentStatus } from './ui';
+import { handleInternalLink } from '../lib/navigation';
 export default function MyTournaments({ onAuth }: { onAuth: () => void }) {
   const [items, setItems] = useState<OwnedTournament[] | null>(null);
   const [selected, setSelected] = useState<OwnedTournament | null>(null);
@@ -85,7 +86,7 @@ export default function MyTournaments({ onAuth }: { onAuth: () => void }) {
             <div className="owned-tournaments-list">
               {items.map((t) => (
                 <div key={t.code} className="owned-tournament-card">
-                  <a href={'/t/' + t.code}>
+                  <a href={'/t/' + t.code} onClick={handleInternalLink}>
                     <div className="owned-tournament-details">
                       <div className="owned-tournament-title">
                         <h2>{t.name}</h2>
@@ -117,7 +118,12 @@ export default function MyTournaments({ onAuth }: { onAuth: () => void }) {
                 </div>
               ))}
             </div>
-            <a ref={createLink} className="button primary" href="/create">
+            <a
+              ref={createLink}
+              className="button primary"
+              href="/create"
+              onClick={handleInternalLink}
+            >
               {items.length ? '+ Create new tournament' : 'Create Tournament'}
             </a>
           </div>

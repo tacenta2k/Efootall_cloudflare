@@ -4,6 +4,7 @@ import { Check, Pencil, ArrowRight, Clock } from 'lucide-react';
 import type { Action, Match, Tie, Tournament } from '../lib/types';
 import { aggregate, knockoutResolution, played } from '../lib/engine';
 import { ApiError } from '../lib/api';
+import { registerNavigationGuard } from '../lib/navigation';
 import { ErrorText, Modal, Empty } from './ui';
 export function roundLabel(t: Tournament, round: number) {
   const remaining = Math.log2(t.settings.knockout) - round;
@@ -261,8 +262,11 @@ export function ScoreModal({
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
+  const confirmLeave = () =>
+    !busy && (!dirty || window.confirm('Discard the scores you have not saved?'));
+  useEffect(() => registerNavigationGuard(confirmLeave), [busy, dirty]);
   const close = () => {
-    if (!busy && (!dirty || window.confirm('Discard the scores you have not saved?'))) onClose();
+    if (confirmLeave()) onClose();
   };
   const locked =
     !current ||
