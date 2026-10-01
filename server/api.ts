@@ -210,7 +210,8 @@ export async function handler(
           throw new HttpError(422, e instanceof Error ? e.message : 'Invalid action.');
         }
         await sql`insert into audit_log (tournament_id,actor_id,action,previous_state) values (${found.t.id},${owner},${sql.json(payload.action as never)},${sql.json(found.t as never)})`;
-        await save(sql, next, owner);
+        if (payload.action.type === 'avatar') await save(sql, next, owner, false, payload.action);
+        else await save(sql, next, owner);
         return next;
       });
       if (['avatar', 'settings'].includes(payload.action.type)) await cleanupLogos(owner, request);

@@ -174,6 +174,28 @@ describe('server authorization and concurrency', () => {
     expect(mocks.save).toHaveBeenCalledOnce();
     expect((await response.json()).tournament.matches[0].homeScore).toBe(4);
   });
+  it('passes avatar edits to the persistence fast path', async () => {
+    const found = await mocks.load();
+    const player = found.t.players[0];
+    const response = await handler(
+      request(
+        'PATCH',
+        {
+          version: found.t.version,
+          action: { type: 'avatar', playerId: player.id, avatar: '🔥' },
+        },
+        'valid',
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.save).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ version: found.t.version + 1 }),
+      owner,
+      false,
+      { type: 'avatar', playerId: player.id, avatar: '🔥' },
+    );
+  });
   it('does not pretend database errors succeeded', async () => {
     mocks.save.mockRejectedValueOnce(new Error('Connection lost'));
     const response = await handler(

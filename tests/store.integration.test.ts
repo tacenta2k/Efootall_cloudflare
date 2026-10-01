@@ -105,6 +105,19 @@ it.skipIf(process.env.PES_VERIFY_LINKED_DB !== '1')(
           awayScore: 2,
           leaguePenalties: { home: 4, away: 3 },
         });
+        t = applyAction(t, { type: 'avatar', playerId: t.players[0].id, avatar: '🔥' }, now);
+        await save(tx, t, owner, false, {
+          type: 'avatar',
+          playerId: t.players[0].id,
+          avatar: '🔥',
+        });
+        expect((await load(tx, code))?.t).toMatchObject({
+          version: t.version,
+          players: expect.arrayContaining([
+            expect.objectContaining({ id: t.players[0].id, avatar: '🔥' }),
+          ]),
+        });
+        console.info('Linked verification: avatar update saved without replacing fixtures.');
         console.info('Linked verification: shootout saved and loaded; rolling back.');
         throw rollback;
       });

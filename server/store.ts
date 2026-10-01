@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import postgres from 'postgres';
-import type { Tournament } from '../src/lib/types';
+import type { Action, Tournament } from '../src/lib/types';
 import { cloudflareBindings, databaseConfigured, serverEnv } from './config';
 type Connection = ReturnType<typeof postgres>;
 const requests = new AsyncLocalStorage<{ connection?: Connection }>();
@@ -103,11 +103,23 @@ export async function load(
     },
   };
 }
-export async function save(sql: Tx, t: Tournament, owner: string, isNew = false) {
+export async function save(
+  sql: Tx,
+  t: Tournament,
+  owner: string,
+  isNew = false,
+  action?: Action,
+) {
   if (isNew)
     await sql`insert into tournaments (id,public_code,owner_id,name,settings,status,version) values (${t.id},${t.code},${owner},${t.settings.name},${sql.json(t.settings as never)},${t.status},${t.version})`;
   else
     await sql`update tournaments set name=${t.settings.name},settings=${sql.json(t.settings as never)},status=${t.status},champion_id=${t.champion},manual_order=${sql.json(t.manualOrder)},version=${t.version},updated_at=now() where id=${t.id}`;
+  if (!isNew && action?.type === 'avatar') {
+    const rows = await sql`update players set avatar=${action.avatar}
+      where tournament_id=${t.id} and id=${action.playerId} returning id`;
+    if (!rows.length) throw new Error('Player not found while saving avatar.');
+    return;
+  }
   // Parent row is locked; the full normalized snapshot is replaced atomically.
   await sql`delete from matches where tournament_id=${t.id}`;
   await sql`delete from knockout_ties where tournament_id=${t.id}`;
